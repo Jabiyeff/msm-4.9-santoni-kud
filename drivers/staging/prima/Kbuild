@@ -793,6 +793,7 @@ EXTRA_CFLAGS += $(call cc-option, -Wframe-larger-than=2048)
 
 # Silence Clang warning
 ifeq ($(cc-name),clang)
+EXTRA_CFLAGS += $(call cc-option, -Wframe-larger-than=2048)
 EXTRA_CFLAGS += -Wno-enum-conversion
 endif
 
