@@ -32,12 +32,12 @@ static void power_supply_update_bat_leds_offchg(struct power_supply *psy)
 {
 	union power_supply_propval status, bat_percent;
 
-	if (psy->get_property(psy, POWER_SUPPLY_PROP_STATUS, &status))
+	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_STATUS, &status))
 		return;
-	if (psy->get_property(psy, POWER_SUPPLY_PROP_CAPACITY, &bat_percent))
+	if (power_supply_get_property(psy, POWER_SUPPLY_PROP_CAPACITY, &bat_percent))
 		return;
 
-	dev_dbg(psy->dev, "%s %d\n", __func__, status.intval);
+	dev_dbg(&psy->dev, "%s %d\n", __func__, status.intval);
 
 	switch (status.intval) {
 	case POWER_SUPPLY_STATUS_FULL:
@@ -111,15 +111,15 @@ static int power_supply_create_bat_triggers_offchg(struct power_supply *psy)
 	int rc = 0;
 
 	psy->charging_red_trig_name = kasprintf(GFP_KERNEL,
-					"%s-red", psy->name);
+					"%s-red", psy->desc->name);
 	if (!psy->charging_red_trig_name)
 		goto charging_red_failed;
 	psy->charging_green_trig_name = kasprintf(GFP_KERNEL,
-					"%s-green", psy->name);
+					"%s-green", psy->desc->name);
 	if (!psy->charging_green_trig_name)
 		goto charging_green_failed;
 	psy->charging_blue_trig_name = kasprintf(GFP_KERNEL,
-					"%s-blue", psy->name);
+					"%s-blue", psy->desc->name);
 	if (!psy->charging_blue_trig_name)
 		goto charging_blue_failed;
 
@@ -243,7 +243,7 @@ static void power_supply_remove_gen_triggers(struct power_supply *psy)
 
 void power_supply_update_leds(struct power_supply *psy)
 {
-	if (psy->type == POWER_SUPPLY_TYPE_BATTERY) {
+	if (psy->desc->type == POWER_SUPPLY_TYPE_BATTERY) {
 		if (saved_command_line_power_supply())
 			power_supply_update_bat_leds_offchg(psy);
 		else
@@ -254,7 +254,7 @@ void power_supply_update_leds(struct power_supply *psy)
 
 int power_supply_create_triggers(struct power_supply *psy)
 {
-	if (psy->type == POWER_SUPPLY_TYPE_BATTERY) {
+	if (psy->desc->type == POWER_SUPPLY_TYPE_BATTERY) {
 		if (saved_command_line_power_supply())
 			return power_supply_create_bat_triggers_offchg(psy);
 		else
