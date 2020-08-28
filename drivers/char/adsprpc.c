@@ -111,6 +111,7 @@
 #define FASTRPC_STATIC_HANDLE_LISTENER (3)
 #define FASTRPC_STATIC_HANDLE_MAX (20)
 #define FASTRPC_LATENCY_CTRL_ENB  (1)
+#define FASTRPC_TIMEOUT (3000) /* 3s */
 
 #define MAX_SIZE_LIMIT (0x78000000)
 #define INIT_FILELEN_MAX (2*1024*1024)
@@ -2077,16 +2078,21 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	if (err)
 		goto bail;
  wait:
-	if (kernel)
-		wait_for_completion(&ctx->work);
-	else {
+	if (kernel) {
+		int rc = wait_for_completion_timeout(&ctx->work,
+				msecs_to_jiffies(FASTRPC_TIMEOUT));
+		if (!rc) {
+			pr_err("wait for completion timeout and trigger ADSP SSR b/132430192\n");
+			/* b/132430192 WA to trigger adsp SSR */
+			subsystem_restart("adsp");
+			goto bail;
+		}
+	} else {
 		interrupted = wait_for_completion_interruptible(&ctx->work);
 		VERIFY(err, 0 == (err = interrupted));
 		if (err)
 			goto bail;
 	}
-	if (ctx->handle)
-		glink_rx_done(ctx->handle, ctx->ptr, true);
 	PERF(fl->profile, GET_COUNTER(perf_counter, PERF_INVARGS),
 	if (!fl->sctx->smmu.coherent)
 		inv_args(ctx);
@@ -2102,6 +2108,10 @@ static int fastrpc_internal_invoke(struct fastrpc_file *fl, uint32_t mode,
 	if (err)
 		goto bail;
  bail:
+	if (ctx->handle) {
+		glink_rx_done(ctx->handle, ctx->ptr, true);
+		ctx->handle = NULL;
+	}
 	if (ctx && interrupted == -ERESTARTSYS)
 		context_save_interrupted(ctx);
 	else if (ctx)
@@ -2950,8 +2960,10 @@ static void fastrpc_glink_notify_rx(void *handle, const void *priv,
 
 	context_notify_user(me->ctxtable[index], rsp->retval);
 bail:
-	if (err)
+	if (err) {
+		glink_rx_done(handle, ptr, true);
 		pr_err("adsprpc: invalid response or context\n");
+	}
 }
 
 static void fastrpc_glink_notify_state(void *handle, const void *priv,
@@ -3219,7 +3231,7 @@ static ssize_t fastrpc_debugfs_read(struct file *filp, char __user *buffer,
 	int i, j, sess_used = 0, ret = 0;
 	char *fileinfo = NULL;
 	char single_line[UL_SIZE] = "----------------";
-	char title[UL_SIZE] = "=========================";
+	char title[UL_SIZE] = "========================";
 
 	fileinfo = kzalloc(DEBUGFS_SIZE, GFP_KERNEL);
 	if (!fileinfo)
