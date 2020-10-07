@@ -24,7 +24,7 @@
 	interrupt-parent = <&wakegic>;
 
 	chosen {
-		bootargs = "boot_cpus=0,1,2,3,4,5,6,7 core_ctl_disable_cpumask=0-7 kpti=0 noirqdebug norandmaps printk.devkmsg=off rcu_nocbs=0-7";
+		bootargs = "boot_cpus=0,1,2,3,4,5,6,7 core_ctl_disable_cpumask=0-7 kpti=0";
 	};
 
 	firmware: firmware {
