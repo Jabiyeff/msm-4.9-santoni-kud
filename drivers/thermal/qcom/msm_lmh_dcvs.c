@@ -1,13 +1,6 @@
-/* Copyright (c) 2016-2018, The Linux Foundation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 and
- * only version 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+// SPDX-License-Identifier: GPL-2.0-only
+/*
+ * Copyright (c) 2016-2019, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "%s:%s " fmt, KBUILD_MODNAME, __func__
@@ -18,6 +11,7 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/of_irq.h>
+#include <linux/of_address.h>
 #include <linux/platform_device.h>
 #include <linux/sched.h>
 #include <linux/io.h>
@@ -27,6 +21,7 @@
 #include <linux/cpu_cooling.h>
 #include <linux/atomic.h>
 #include <linux/regulator/consumer.h>
+#include <linux/cpufreq.h>
 
 #include <asm/smp_plat.h>
 #include <asm/cacheflush.h>
@@ -38,38 +33,29 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/lmh.h>
+#undef CREATE_TRACE_POINTS
+#include <trace/events/power.h>
 
-#define LIMITS_DCVSH                0x10
-#define LIMITS_PROFILE_CHANGE       0x01
-#define LIMITS_NODE_DCVS            0x44435653
+#define LIMITS_DCVSH			0x10
+#define LIMITS_NODE_DCVS		0x44435653
 
-#define LIMITS_SUB_FN_THERMAL       0x54484D4C
-#define LIMITS_SUB_FN_CRNT          0x43524E54
-#define LIMITS_SUB_FN_REL           0x52454C00
-#define LIMITS_SUB_FN_BCL           0x42434C00
-#define LIMITS_SUB_FN_GENERAL       0x47454E00
+#define LIMITS_SUB_FN_THERMAL		0x54484D4C
+#define LIMITS_HI_THRESHOLD		0x48494748
+#define LIMITS_LOW_THRESHOLD		0x4C4F5700
+#define LIMITS_ARM_THRESHOLD		0x41524D00
 
-#define LIMITS_ALGO_MODE_ENABLE     0x454E424C
+#define LIMITS_CLUSTER_0		0x6370302D
+#define LIMITS_CLUSTER_1		0x6370312D
 
-#define LIMITS_HI_THRESHOLD         0x48494748
-#define LIMITS_LOW_THRESHOLD        0x4C4F5700
-#define LIMITS_ARM_THRESHOLD        0x41524D00
+#define LIMITS_FREQ_CAP			0x46434150
 
-#define LIMITS_CLUSTER_0            0x6370302D
-#define LIMITS_CLUSTER_1            0x6370312D
-
-#define LIMITS_FREQ_CAP             0x46434150
-
-#define LIMITS_TEMP_DEFAULT         75000
-#define LIMITS_TEMP_HIGH_THRESH_MAX 120000
-#define LIMITS_LOW_THRESHOLD_OFFSET 500
-#define LIMITS_POLLING_DELAY_MS     10
-#define LIMITS_CLUSTER_0_REQ        0x17D43704
-#define LIMITS_CLUSTER_1_REQ        0x17D45F04
-#define LIMITS_CLUSTER_0_INT_CLR    0x17D78808
-#define LIMITS_CLUSTER_1_INT_CLR    0x17D70808
-#define LIMITS_CLUSTER_0_MIN_FREQ   0x17D78BC0
-#define LIMITS_CLUSTER_1_MIN_FREQ   0x17D70BC0
+#define LIMITS_TEMP_DEFAULT		75000
+#define LIMITS_TEMP_HIGH_THRESH_MAX	120000
+#define LIMITS_LOW_THRESHOLD_OFFSET	500
+#define LIMITS_POLLING_DELAY_MS		10
+#define LIMITS_CLUSTER_REQ_OFFSET	0x704
+#define LIMITS_CLUSTER_INT_CLR_OFFSET	0x8
+#define LIMITS_CLUSTER_MIN_FREQ_OFFSET	0x3C0
 #define dcvsh_get_frequency(_val, _max) do { \
 	_max = (_val) & 0x3FF; \
 	_max *= 19200; \
@@ -98,6 +84,7 @@ struct limits_dcvs_hw {
 	void *int_clr_reg;
 	void *min_freq_reg;
 	cpumask_t core_map;
+	cpumask_t online_mask;
 	struct delayed_work freq_poll_work;
 	unsigned long max_freq;
 	unsigned long min_freq;
@@ -107,7 +94,9 @@ struct limits_dcvs_hw {
 	bool is_irq_enabled;
 	struct mutex access_lock;
 	struct __limits_cdev_data *cdev_data;
+	uint32_t cdev_registered;
 	struct regulator *isens_reg;
+	struct work_struct cdev_register_work;
 };
 
 LIST_HEAD(lmh_dcvs_hw_list);
@@ -126,10 +115,8 @@ static int limits_dcvs_get_freq_limits(uint32_t cpu, unsigned long *max_freq,
 		return -ENODEV;
 	}
 
-	rcu_read_lock();
 	dev_pm_opp_find_freq_floor(cpu_dev, &freq_ceil);
 	dev_pm_opp_find_freq_ceil(cpu_dev, &freq_floor);
-	rcu_read_unlock();
 
 	*max_freq = freq_ceil / 1000;
 	*min_freq = freq_floor / 1000;
@@ -157,7 +144,6 @@ static unsigned long limits_mitigation_notify(struct limits_dcvs_hw *hw)
 			cpumask_first(&hw->core_map),
 			max_limit);
 	freq_val = FREQ_KHZ_TO_HZ(max_limit);
-	rcu_read_lock();
 	opp_entry = dev_pm_opp_find_freq_floor(cpu_dev, &freq_val);
 	/*
 	 * Hardware mitigation frequency can be lower than the lowest
@@ -171,13 +157,15 @@ static unsigned long limits_mitigation_notify(struct limits_dcvs_hw *hw)
 			dev_err(cpu_dev, "frequency:%lu. opp error:%ld\n",
 					freq_val, PTR_ERR(opp_entry));
 	}
-	rcu_read_unlock();
 	max_limit = FREQ_HZ_TO_KHZ(freq_val);
 
 	sched_update_cpu_freq_min_max(&hw->core_map, 0, max_limit);
 	pr_debug("CPU:%d max limit:%lu\n", cpumask_first(&hw->core_map),
 			max_limit);
 	trace_lmh_dcvs_freq(cpumask_first(&hw->core_map), max_limit);
+	trace_clock_set_rate(hw->sensor_name,
+			max_limit,
+			cpumask_first(&hw->core_map));
 
 notify_exit:
 	hw->hw_freq_limit = max_limit;
@@ -192,7 +180,7 @@ static void limits_dcvs_poll(struct work_struct *work)
 					freq_poll_work.work);
 
 	mutex_lock(&hw->access_lock);
-	if (hw->max_freq == UINT_MAX)
+	if (hw->max_freq == U32_MAX)
 		limits_dcvs_get_freq_limits(cpumask_first(&hw->core_map),
 			&hw->max_freq, &hw->min_freq);
 	max_limit = limits_mitigation_notify(hw);
@@ -324,33 +312,12 @@ static struct limits_dcvs_hw *get_dcvsh_hw_from_cpu(int cpu)
 {
 	struct limits_dcvs_hw *hw;
 
-	mutex_lock(&lmh_dcvs_list_access);
 	list_for_each_entry(hw, &lmh_dcvs_hw_list, list) {
-		if (cpumask_test_cpu(cpu, &hw->core_map)) {
-			mutex_unlock(&lmh_dcvs_list_access);
+		if (cpumask_test_cpu(cpu, &hw->core_map))
 			return hw;
-		}
 	}
-	mutex_unlock(&lmh_dcvs_list_access);
 
 	return NULL;
-}
-
-static int enable_lmh(void)
-{
-	int ret = 0;
-	struct scm_desc desc_arg;
-
-	desc_arg.args[0] = 1;
-	desc_arg.arginfo = SCM_ARGS(1, SCM_VAL);
-	ret = scm_call2(SCM_SIP_FNID(SCM_SVC_LMH, LIMITS_PROFILE_CHANGE),
-			&desc_arg);
-	if (ret) {
-		pr_err("Error switching profile:[1]. err:%d\n", ret);
-		return ret;
-	}
-
-	return ret;
 }
 
 static int lmh_set_max_limit(int cpu, u32 freq)
@@ -415,38 +382,58 @@ static struct cpu_cooling_ops cd_ops = {
 	.floor_limit = lmh_set_min_limit,
 };
 
+static void register_cooling_device(struct work_struct *work)
+{
+	struct limits_dcvs_hw *hw;
+	unsigned int cpu = 0, idx = 0;
+	struct cpufreq_policy *policy = NULL;
+
+	mutex_lock(&lmh_dcvs_list_access);
+	list_for_each_entry(hw, &lmh_dcvs_hw_list, list) {
+		if (hw->max_freq == U32_MAX)
+			limits_dcvs_get_freq_limits(cpumask_first(&hw->core_map),
+			&hw->max_freq, &hw->min_freq);
+
+		idx = 0;
+		for_each_cpu(cpu, &hw->core_map) {
+			if (hw->cdev_data[idx].cdev ||
+				!cpumask_test_cpu(cpu, &hw->online_mask)) {
+				idx++;
+				continue;
+			}
+			policy = cpufreq_cpu_get(cpu);
+			if (!policy) {
+				pr_err("no policy for cpu%d\n", cpu);
+				continue;
+			}
+			hw->cdev_data[idx].max_freq = U32_MAX;
+			hw->cdev_data[idx].min_freq = 0;
+			hw->cdev_data[idx].cdev =
+					cpufreq_platform_cooling_register(
+							policy, &cd_ops);
+			if (IS_ERR_OR_NULL(hw->cdev_data[idx].cdev)) {
+				pr_err("CPU:%u cdev register error:%ld\n",
+					cpu, PTR_ERR(hw->cdev_data[idx].cdev));
+				hw->cdev_data[idx].cdev = NULL;
+			} else {
+				pr_debug("CPU:%u cdev registered\n", cpu);
+				hw->cdev_registered++;
+			}
+			idx++;
+		}
+	}
+	mutex_unlock(&lmh_dcvs_list_access);
+}
+
 static int limits_cpu_online(unsigned int online_cpu)
 {
 	struct limits_dcvs_hw *hw = get_dcvsh_hw_from_cpu(online_cpu);
-	unsigned int idx = 0, cpu = 0;
 
 	if (!hw)
 		return 0;
-
-	for_each_cpu(cpu, &hw->core_map) {
-		cpumask_t cpu_mask  = { CPU_BITS_NONE };
-
-		if (cpu != online_cpu) {
-			idx++;
-			continue;
-		} else if (hw->cdev_data[idx].cdev) {
-			return 0;
-		}
-		cpumask_set_cpu(cpu, &cpu_mask);
-		hw->cdev_data[idx].max_freq = U32_MAX;
-		hw->cdev_data[idx].min_freq = 0;
-		hw->cdev_data[idx].cdev = cpufreq_platform_cooling_register(
-						&cpu_mask, &cd_ops);
-		if (IS_ERR_OR_NULL(hw->cdev_data[idx].cdev)) {
-			pr_err("CPU:%u cooling device register error:%ld\n",
-				cpu, PTR_ERR(hw->cdev_data[idx].cdev));
-			hw->cdev_data[idx].cdev = NULL;
-		} else {
-			pr_debug("CPU:%u cooling device registered\n", cpu);
-		}
-		break;
-
-	}
+	cpumask_set_cpu(online_cpu, &hw->online_mask);
+	if (hw->cdev_registered != cpumask_weight(&hw->core_map))
+		queue_work(system_highpri_wq, &hw->cdev_register_work);
 
 	return 0;
 }
@@ -514,9 +501,10 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 	struct device_node *dn = pdev->dev.of_node;
 	struct device_node *cpu_node, *lmh_node;
 	uint32_t request_reg, clear_reg, min_reg;
-	unsigned long max_freq, min_freq;
-	int cpu;
+	int cpu, idx = 0;
 	cpumask_t mask = { CPU_BITS_NONE };
+	const __be32 *addr;
+	bool no_cdev_register = false;
 
 	for_each_possible_cpu(cpu) {
 		cpu_node = of_cpu_device_node_get(cpu);
@@ -538,10 +526,6 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 	if (cpumask_empty(&mask))
 		return -EINVAL;
 
-	ret = limits_dcvs_get_freq_limits(cpumask_first(&mask), &max_freq,
-				     &min_freq);
-	if (ret)
-		return ret;
 	hw = devm_kzalloc(&pdev->dev, sizeof(*hw), GFP_KERNEL);
 	if (!hw)
 		return -ENOMEM;
@@ -552,6 +536,14 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	cpumask_copy(&hw->core_map, &mask);
+	cpumask_clear(&hw->online_mask);
+	hw->cdev_registered = 0;
+	for_each_cpu(cpu, &hw->core_map) {
+		hw->cdev_data[idx].cdev = NULL;
+		hw->cdev_data[idx].max_freq = U32_MAX;
+		hw->cdev_data[idx].min_freq = 0;
+		idx++;
+	}
 	ret = of_property_read_u32(dn, "qcom,affinity", &affinity);
 	if (ret)
 		return -ENODEV;
@@ -566,29 +558,22 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 		return -EINVAL;
 	};
 
-	/* Enable the thermal algorithm early */
-	ret = limits_dcvs_write(hw->affinity, LIMITS_SUB_FN_THERMAL,
-		 LIMITS_ALGO_MODE_ENABLE, 1, 0, 0);
-	if (ret)
-		return ret;
-	/* Enable the LMH outer loop algorithm */
-	ret = limits_dcvs_write(hw->affinity, LIMITS_SUB_FN_CRNT,
-		 LIMITS_ALGO_MODE_ENABLE, 1, 0, 0);
-	if (ret)
-		return ret;
-	/* Enable the Reliability algorithm */
-	ret = limits_dcvs_write(hw->affinity, LIMITS_SUB_FN_REL,
-		 LIMITS_ALGO_MODE_ENABLE, 1, 0, 0);
-	if (ret)
-		return ret;
-	/* Enable the BCL algorithm */
-	ret = limits_dcvs_write(hw->affinity, LIMITS_SUB_FN_BCL,
-		 LIMITS_ALGO_MODE_ENABLE, 1, 0, 0);
-	if (ret)
-		return ret;
-	ret = enable_lmh();
-	if (ret)
-		return ret;
+	no_cdev_register = of_property_read_bool(dn,
+				"qcom,no-cooling-device-register");
+
+	addr = of_get_address(dn, 0, NULL, NULL);
+	if (!addr) {
+		pr_err("Property llm-base-addr not found\n");
+		return -EINVAL;
+	}
+	clear_reg = be32_to_cpu(addr[0]) + LIMITS_CLUSTER_INT_CLR_OFFSET;
+	min_reg = be32_to_cpu(addr[0]) + LIMITS_CLUSTER_MIN_FREQ_OFFSET;
+	addr = of_get_address(dn, 1, NULL, NULL);
+	if (!addr) {
+		pr_err("Property osm-base-addr not found\n");
+		return -EINVAL;
+	}
+	request_reg = be32_to_cpu(addr[0]) + LIMITS_CLUSTER_REQ_OFFSET;
 
 	/*
 	 * Setup virtual thermal zones for each LMH-DCVS hardware
@@ -599,30 +584,20 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 	 */
 	hw->temp_limits[LIMITS_TRIP_HI] = INT_MAX;
 	hw->temp_limits[LIMITS_TRIP_ARM] = 0;
-	hw->hw_freq_limit = hw->max_freq = max_freq;
-	hw->min_freq = min_freq;
+	hw->hw_freq_limit = hw->max_freq = U32_MAX;
+	hw->min_freq = 0;
 	snprintf(hw->sensor_name, sizeof(hw->sensor_name), "limits_sensor-%02d",
 			affinity);
 	tzdev = thermal_zone_of_sensor_register(&pdev->dev, 0, hw,
 			&limits_sensor_ops);
-	if (IS_ERR_OR_NULL(tzdev))
-		return PTR_ERR(tzdev);
-
-	switch (affinity) {
-	case 0:
-		request_reg = LIMITS_CLUSTER_0_REQ;
-		clear_reg = LIMITS_CLUSTER_0_INT_CLR;
-		min_reg = LIMITS_CLUSTER_0_MIN_FREQ;
-		break;
-	case 1:
-		request_reg = LIMITS_CLUSTER_1_REQ;
-		clear_reg = LIMITS_CLUSTER_1_INT_CLR;
-		min_reg = LIMITS_CLUSTER_1_MIN_FREQ;
-		break;
-	default:
-		ret = -EINVAL;
-		goto unregister_sensor;
-	};
+	if (IS_ERR_OR_NULL(tzdev)) {
+		/*
+		 * Ignore error in case if thermal zone devicetree node is not
+		 * defined for this lmh hardware.
+		 */
+		if (!tzdev || PTR_ERR(tzdev) != -ENODEV)
+			return PTR_ERR(tzdev);
+	}
 
 	hw->min_freq_reg = devm_ioremap(&pdev->dev, min_reg, 0x4);
 	if (!hw->min_freq_reg) {
@@ -632,6 +607,7 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 	}
 
 	mutex_init(&hw->access_lock);
+	INIT_WORK(&hw->cdev_register_work, register_cooling_device);
 	INIT_DEFERRABLE_WORK(&hw->freq_poll_work, limits_dcvs_poll);
 	hw->osm_hw_reg = devm_ioremap(&pdev->dev, request_reg, 0x4);
 	if (!hw->osm_hw_reg) {
@@ -652,7 +628,7 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 	hw->is_irq_enabled = true;
 	ret = devm_request_threaded_irq(&pdev->dev, hw->irq_num, NULL,
 		lmh_dcvs_handle_isr, IRQF_TRIGGER_HIGH | IRQF_ONESHOT
-		| IRQF_NO_SUSPEND, hw->sensor_name, hw);
+		| IRQF_NO_SUSPEND | IRQF_SHARED, hw->sensor_name, hw);
 	if (ret) {
 		pr_err("Error registering for irq. err:%d\n", ret);
 		ret = 0;
@@ -662,20 +638,24 @@ static int limits_dcvs_probe(struct platform_device *pdev)
 	hw->lmh_freq_attr.attr.name = "lmh_freq_limit";
 	hw->lmh_freq_attr.show = lmh_freq_limit_show;
 	hw->lmh_freq_attr.attr.mode = 0444;
+	sysfs_attr_init(&hw->lmh_freq_attr.attr);
 	device_create_file(&pdev->dev, &hw->lmh_freq_attr);
 
 probe_exit:
 	mutex_lock(&lmh_dcvs_list_access);
 	INIT_LIST_HEAD(&hw->list);
-	list_add(&hw->list, &lmh_dcvs_hw_list);
+	list_add_tail(&hw->list, &lmh_dcvs_hw_list);
 	mutex_unlock(&lmh_dcvs_list_access);
 	lmh_debug_register(pdev);
 
-	ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN, "lmh-dcvs/cdev:online",
-				limits_cpu_online, NULL);
-	if (ret < 0)
-		goto unregister_sensor;
-	ret = 0;
+	if (!no_cdev_register) {
+		ret = cpuhp_setup_state(CPUHP_AP_ONLINE_DYN,
+					"lmh-dcvs/cdev:online",
+					limits_cpu_online, NULL);
+		if (ret < 0)
+			goto unregister_sensor;
+		ret = 0;
+	}
 
 	return ret;
 

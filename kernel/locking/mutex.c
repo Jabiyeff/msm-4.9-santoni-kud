@@ -26,7 +26,6 @@
 #include <linux/interrupt.h>
 #include <linux/debug_locks.h>
 #include <linux/osq_lock.h>
-#include <linux/delay.h>
 
 /*
  * In the DEBUG case we are using the "NULL fastpath" for mutexes,
@@ -227,24 +226,30 @@ bool mutex_spin_on_owner(struct mutex *lock, struct task_struct *owner)
 {
 	bool ret = true;
 
-	rcu_read_lock();
-	while (lock->owner == owner) {
+	while (1) {
+		bool same_owner;
+
 		/*
-		 * Ensure we emit the owner->on_cpu, dereference _after_
-		 * checking lock->owner still matches owner. If that fails,
+		 * Ensure lock->owner still matches owner. If that fails,
 		 * owner might point to freed memory. If it still matches,
 		 * the rcu_read_lock() ensures the memory stays valid.
 		 */
-		barrier();
+		rcu_read_lock();
+		same_owner = lock->owner == owner;
+		if (same_owner)
+			ret = owner->on_cpu;
+		rcu_read_unlock();
 
-		if (!owner->on_cpu || need_resched()) {
+		if (!ret || !same_owner)
+			break;
+
+		if (need_resched()) {
 			ret = false;
 			break;
 		}
 
 		cpu_relax_lowlatency();
 	}
-	rcu_read_unlock();
 
 	return ret;
 }
@@ -379,17 +384,6 @@ static bool mutex_optimistic_spin(struct mutex *lock,
 		 * values at the cost of a few extra spins.
 		 */
 		cpu_relax_lowlatency();
-
-		/*
-		 * On arm systems, we must slow down the waiter's repeated
-		 * aquisition of spin_mlock and atomics on the lock count, or
-		 * we risk starving out a thread attempting to release the
-		 * mutex. The mutex slowpath release must take spin lock
-		 * wait_lock. This spin lock can share a monitor with the
-		 * other waiter atomics in the mutex data structure, so must
-		 * take care to rate limit the waiters.
-		 */
-		udelay(1);
 	}
 
 	osq_unlock(&lock->osq);

@@ -1,6 +1,6 @@
 VERSION = 4
 PATCHLEVEL = 9
-SUBLEVEL = 241
+SUBLEVEL = 243
 EXTRAVERSION =
 NAME = Roaring Lionus
 
@@ -728,6 +728,13 @@ DISABLE_LTO	+= $(DISABLE_CFI)
 export DISABLE_CFI
 endif
 
+ifdef CONFIG_SHADOW_CALL_STACK
+scs-flags	:= -fsanitize=shadow-call-stack
+KBUILD_CFLAGS	+= $(scs-flags)
+DISABLE_SCS	:= -fno-sanitize=shadow-call-stack
+export DISABLE_SCS
+endif
+
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS   += -Os
 else
@@ -805,6 +812,13 @@ KBUILD_CFLAGS += $(call cc-disable-warning, tautological-compare)
 # See modpost pattern 2
 KBUILD_CFLAGS += $(call cc-option, -mno-global-merge,)
 KBUILD_CFLAGS += $(call cc-option, -fcatch-undefined-behavior)
+KBUILD_CFLAGS += $(call cc-option, -mllvm -polly) \
+		 $(call cc-option, -mllvm -polly-run-dce) \
+		 $(call cc-option, -mllvm -polly-run-inliner) \
+		 $(call cc-option, -mllvm -polly-opt-fusion=max) \
+		 $(call cc-option, -mllvm -polly-ast-use-context) \
+		 $(call cc-option, -mllvm -polly-detect-keep-going) \
+		 $(call cc-option, -mllvm -polly-vectorizer=stripmine)
 else
 
 # These warnings generated too much noise in a regular build.
@@ -1228,6 +1242,11 @@ endif
 ifdef cfi-flags
   ifeq ($(call cc-option, $(cfi-flags)),)
 	@echo Cannot use CONFIG_CFI: $(cfi-flags) not supported by compiler >&2 && exit 1
+  endif
+endif
+ifdef scs-flags
+  ifeq ($(call cc-option, $(scs-flags)),)
+	@echo Cannot use CONFIG_SHADOW_CALL_STACK: $(scs-flags) not supported by compiler >&2 && exit 1
   endif
 endif
 	@:

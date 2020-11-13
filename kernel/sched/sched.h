@@ -3,6 +3,7 @@
 #include <linux/sched/sysctl.h>
 #include <linux/sched/rt.h>
 #include <linux/sched/smt.h>
+#include <linux/sched/cpufreq.h>
 #include <linux/u64_stats_sync.h>
 #include <linux/sched/deadline.h>
 #include <linux/kernel_stat.h>
@@ -324,7 +325,6 @@ struct cfs_bandwidth {
 	ktime_t period;
 	u64 quota, runtime;
 	s64 hierarchical_quota;
-	u64 runtime_expires;
 
 	int idle, period_active;
 	struct hrtimer period_timer, slack_timer;
@@ -529,6 +529,8 @@ struct cfs_rq {
 	struct task_group *tg;	/* group that "owns" this runqueue */
 
 #ifdef CONFIG_CFS_BANDWIDTH
+	int			runtime_enabled;
+	s64			runtime_remaining;
 
 #ifdef CONFIG_SCHED_WALT
 	struct walt_sched_stats walt_stats;
@@ -2585,11 +2587,6 @@ static inline int compute_load_scale_factor(struct sched_cluster *cluster)
 	return load_scale;
 }
 
-static inline int cpu_max_power_cost(int cpu)
-{
-	return cpu_rq(cpu)->cluster->max_power_cost;
-}
-
 static inline int cpu_min_power_cost(int cpu)
 {
 	return cpu_rq(cpu)->cluster->min_power_cost;
@@ -2920,11 +2917,6 @@ static inline void update_cpu_cluster_capacity(const cpumask_t *cpus) { }
 static inline unsigned long thermal_cap(int cpu)
 {
 	return cpu_rq(cpu)->cpu_capacity_orig;
-}
-
-static inline int cpu_max_power_cost(int cpu)
-{
-	return capacity_orig_of(cpu);
 }
 #endif
 

@@ -302,7 +302,7 @@ static void apr_adsp_up(void)
 		wake_up(&dsp_wait);
 
 	if (!is_child_devices_loaded) {
-		schedule_delayed_work(&add_chld_dev_work,
+		queue_delayed_work(system_power_efficient_wq,&add_chld_dev_work,
 				msecs_to_jiffies(100));
 		is_child_devices_loaded = true;
 	}
@@ -1115,9 +1115,9 @@ static int __init apr_debug_init(void)
 }
 #else
 static int __init apr_debug_init(void)
-(
+{
 	return 0;
-)
+}
 #endif
 
 static void apr_cleanup(void)

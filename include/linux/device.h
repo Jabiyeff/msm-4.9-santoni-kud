@@ -861,6 +861,9 @@ struct device {
 
 	bool			offline_disabled:1;
 	bool			offline:1;
+
+	struct list_head	iommu_map_list;
+	struct mutex		iommu_map_lock;
 };
 
 static inline struct device *kobj_to_dev(struct kobject *kobj)
@@ -963,6 +966,16 @@ static inline void device_disable_async_suspend(struct device *dev)
 static inline bool device_async_suspend_enabled(struct device *dev)
 {
 	return !!dev->power.async_suspend;
+}
+
+static inline bool device_pm_not_required(struct device *dev)
+{
+	return dev->power.no_pm;
+}
+
+static inline void device_set_pm_not_required(struct device *dev)
+{
+	dev->power.no_pm = true;
 }
 
 static inline void dev_pm_syscore_device(struct device *dev, bool val)
