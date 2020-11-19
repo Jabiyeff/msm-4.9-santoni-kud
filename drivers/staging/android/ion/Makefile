@@ -1,3 +1,8 @@
+# Silence Clang warning
+ifeq ($(cc-name),clang)
+EXTRA_CFLAGS += $(call cc-option, -Wframe-larger-than=6144)
+endif
+
 obj-$(CONFIG_ION) +=	ion.o ion_heap.o ion_page_pool.o ion_system_heap.o \
 			ion_carveout_heap.o ion_chunk_heap.o ion_system_secure_heap.o
 ifdef CONFIG_ION_MSM
