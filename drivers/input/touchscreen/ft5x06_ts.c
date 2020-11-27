@@ -1907,6 +1907,7 @@ static ssize_t ts_info_show(struct kobject *kobj,
 }
 static struct kobj_attribute ts_info_attr = __ATTR_RO(ts_info);
 
+#ifdef CONFIG_DEBUG_FS
 static bool ft5x06_debug_addr_is_valid(int addr)
 {
 	if (addr < 0 || addr > 0xFF) {
@@ -2038,6 +2039,7 @@ static const struct file_operations debug_dump_info_fops = {
 	.read		= seq_read,
 	.release	= single_release,
 };
+#endif
 
 #ifdef CONFIG_OF
 static int ft5x06_get_dt_coords(struct device *dev, char *name,
@@ -2485,6 +2487,7 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		goto free_update_fw_sys;
 	}
 
+#ifdef CONFIG_DEBUG_FS
 	data->dir = debugfs_create_dir(FT_DEBUG_DIR_NAME, NULL);
 	if (data->dir == NULL || IS_ERR(data->dir)) {
 		pr_err("debugfs_create_dir failed(%ld)\n", PTR_ERR(data->dir));
@@ -2523,11 +2526,14 @@ static int ft5x06_ts_probe(struct i2c_client *client,
 		err = PTR_ERR(temp);
 		goto free_debug_dir;
 	}
+#endif
 
 	data->ts_info = devm_kzalloc(&client->dev,
 				FT_INFO_MAX_LEN, GFP_KERNEL);
 	if (!data->ts_info)
+#ifdef CONFIG_DEBUG_FS
 		goto free_debug_dir;
+#endif
 
 	/*get some register information */
 	reg_addr = FT_REG_POINT_RATE;
@@ -2612,10 +2618,12 @@ free_secure_touch_sysfs:
 		sysfs_remove_file(&data->input_dev->dev.kobj,
 					&attrs[attr_count].attr);
 	}
+#ifdef CONFIG_DEBUG_FS
 free_debug_dir:
 	debugfs_remove_recursive(data->dir);
 free_force_update_fw_sys:
 	device_remove_file(&client->dev, &dev_attr_force_update_fw);
+#endif
 free_update_fw_sys:
 	device_remove_file(&client->dev, &dev_attr_update_fw);
 free_fw_name_sys:
@@ -2684,7 +2692,9 @@ static int ft5x06_ts_remove(struct i2c_client *client)
 		data->gesture_pdata = NULL;
 	}
 
+#ifdef CONFIG_DEBUG_FS
 	debugfs_remove_recursive(data->dir);
+#endif
 	device_remove_file(&client->dev, &dev_attr_force_update_fw);
 	device_remove_file(&client->dev, &dev_attr_update_fw);
 	device_remove_file(&client->dev, &dev_attr_fw_name);
