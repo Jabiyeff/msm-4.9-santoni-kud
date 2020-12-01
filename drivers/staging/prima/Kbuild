@@ -595,7 +595,6 @@ CDEFINES :=	-DANI_BUS_TYPE_PLATFORM=1 \
 		-DGEN6_ONWARDS \
 		-DANI_COMPILER_TYPE_GCC \
 		-DANI_OS_TYPE_ANDROID=6 \
-		-DANI_LOGDUMP \
 		-DWLAN_PERF \
 		-DPTT_SOCK_SVC_ENABLE \
 		-Wall\
@@ -652,7 +651,8 @@ CDEFINES +=	-DWLAN_DEBUG \
 		-DSME_TRACE_RECORD \
 		-DPE_DEBUG_LOGW \
 		-DPE_DEBUG_LOGE \
-                -DDXE_TRACE \
+		-DDXE_TRACE \
+		-DANI_LOGDUMP \
 		-DDEBUG
 endif
 
@@ -784,10 +784,6 @@ ifeq ($(cc-name),clang)
 EXTRA_CFLAGS += $(call cc-option, -Wframe-larger-than=2048)
 EXTRA_CFLAGS += -Wno-enum-conversion
 endif
-
-# Silence Clang warning
-EXTRA_CFLAGS += $(call cc-disable-warning, enum-conversion)
-EXTRA_CFLAGS += $(call cc-option, -Wframe-larger-than=2048)
 
 # Silence Clang warning
 EXTRA_CFLAGS += $(call cc-disable-warning, enum-conversion)
