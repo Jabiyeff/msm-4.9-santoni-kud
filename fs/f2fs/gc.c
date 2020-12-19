@@ -17,6 +17,7 @@
 #include <linux/fb.h>
 #include <linux/pm_wakeup.h>
 #include <linux/power_supply.h>
+#include <uapi/linux/sched.h>
 
 #include "f2fs.h"
 #include "node.h"
