@@ -2673,7 +2673,7 @@ unsigned int sconfig;
 
 
 
-	pr_err("sconfig_show sconfig = %d\n", sconfig);
+	pr_debug("sconfig_show sconfig = %d\n", sconfig);
 
 	return snprintf(buf, SNPRINTF_MAXLEN, "%d\n", sconfig);
 }
@@ -2692,7 +2692,7 @@ static ssize_t sconfig_store(struct device *dev,
 	if (ret)
 		return ret;
 
-	pr_err("sconfig_store sconfig = %d\n", sconfig);
+	pr_debug("sconfig_store sconfig = %d\n", sconfig);
 
 	return size;
 }
