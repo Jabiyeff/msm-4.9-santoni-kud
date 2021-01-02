@@ -734,11 +734,13 @@ else
 KBUILD_CFLAGS   += -O3
 endif
 
+ifeq ($(cc-name),clang)
 ifdef CONFIG_POLLY_CLANG
 KBUILD_CFLAGS	+= -mllvm -polly \
 		   -mllvm -polly-vectorizer=stripmine
 ifdef CONFIG_LD_DEAD_CODE_DATA_ELIMINATION
 KBUILD_CFLAGS	+= -mllvm -polly-run-dce
+endif
 endif
 endif
 
