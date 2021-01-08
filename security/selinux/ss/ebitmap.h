@@ -129,7 +129,9 @@ int ebitmap_set_bit(struct ebitmap *e, unsigned long bit, int value);
 void ebitmap_destroy(struct ebitmap *e);
 int ebitmap_read(struct ebitmap *e, void *fp);
 int ebitmap_write(struct ebitmap *e, void *fp);
-u32 ebitmap_hash(const struct ebitmap *e, u32 hash);
+
+void ebitmap_cache_init(void);
+void ebitmap_cache_destroy(void);
 
 #ifdef CONFIG_NETLABEL
 int ebitmap_netlbl_export(struct ebitmap *ebmap,

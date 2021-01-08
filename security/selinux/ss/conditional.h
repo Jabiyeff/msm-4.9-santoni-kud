@@ -21,7 +21,7 @@
  * A conditional expression is a list of operators and operands
  * in reverse polish notation.
  */
-struct cond_expr_node {
+struct cond_expr {
 #define COND_BOOL	1 /* plain bool */
 #define COND_NOT	2 /* !bool */
 #define COND_OR		3 /* bool || bool */
@@ -30,13 +30,9 @@ struct cond_expr_node {
 #define COND_EQ		6 /* bool == bool */
 #define COND_NEQ	7 /* bool != bool */
 #define COND_LAST	COND_NEQ
-	u32 expr_type;
-	u32 bool;
-};
-
-struct cond_expr {
-	struct cond_expr_node *nodes;
-	u32 len;
+	__u32 expr_type;
+	__u32 bool;
+	struct cond_expr *next;
 };
 
 /*
@@ -45,8 +41,8 @@ struct cond_expr {
  * struct is for that list.
  */
 struct cond_av_list {
-	struct avtab_node **nodes;
-	u32 len;
+	struct avtab_node *node;
+	struct cond_av_list *next;
 };
 
 /*
@@ -58,9 +54,10 @@ struct cond_av_list {
  */
 struct cond_node {
 	int cur_state;
-	struct cond_expr expr;
-	struct cond_av_list true_list;
-	struct cond_av_list false_list;
+	struct cond_expr *expr;
+	struct cond_av_list *true_list;
+	struct cond_av_list *false_list;
+	struct cond_node *next;
 };
 
 int cond_policydb_init(struct policydb *p);
@@ -71,10 +68,10 @@ int cond_destroy_bool(void *key, void *datum, void *p);
 
 int cond_index_bool(void *key, void *datum, void *datap);
 
-int cond_read_bool(struct policydb *p, struct symtab *s, void *fp);
+int cond_read_bool(struct policydb *p, struct hashtab *h, void *fp);
 int cond_read_list(struct policydb *p, void *fp);
 int cond_write_bool(void *key, void *datum, void *ptr);
-int cond_write_list(struct policydb *p, void *fp);
+int cond_write_list(struct policydb *p, struct cond_node *list, void *fp);
 
 void cond_compute_av(struct avtab *ctab, struct avtab_key *key,
 		struct av_decision *avd, struct extended_perms *xperms);
