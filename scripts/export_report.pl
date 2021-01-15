@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl -w
 #
 # (C) Copyright IBM Corporation 2006.
 #	Released under GPL v2.
@@ -7,7 +7,6 @@
 # Usage: export_report.pl -k Module.symvers [-o report_file ] -f *.mod.c
 #
 
-use warnings;
 use Getopt::Std;
 use strict;
 

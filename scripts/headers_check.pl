@@ -1,4 +1,4 @@
-#!/usr/bin/env perl
+#!/usr/bin/perl -w
 #
 # headers_check.pl execute a number of trivial consistency checks
 #
@@ -18,7 +18,6 @@
 #
 # 3) Check for leaked CONFIG_ symbols
 
-use warnings;
 use strict;
 use File::Basename;
 

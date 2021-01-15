@@ -1,4 +1,4 @@
-#! /usr/bin/env perl
+#! /usr/bin/perl
 #
 # checkversion find uses of LINUX_VERSION_CODE or KERNEL_VERSION
 # without including <linux/version.h>, or cases of

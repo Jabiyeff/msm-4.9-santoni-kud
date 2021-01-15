@@ -1,4 +1,4 @@
-#! /usr/bin/env perl
+#! /usr/bin/perl
 #
 # Detect cycles in the header file dependency graph
 # Vegard Nossum <vegardno@ifi.uio.no>
