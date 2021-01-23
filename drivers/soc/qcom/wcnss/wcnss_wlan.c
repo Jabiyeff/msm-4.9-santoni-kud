@@ -1824,7 +1824,6 @@ static int wcnss_wlan_suspend(struct device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_DEBUG_FS
 static int wcnss_wlan_suspend_noirq(struct device *dev)
 {
 	if (penv && dev && (dev == &penv->pdev->dev) &&
@@ -1833,7 +1832,6 @@ static int wcnss_wlan_suspend_noirq(struct device *dev)
 		return penv->pm_ops->suspend_noirq(dev);
 	return 0;
 }
-#endif
 
 static int wcnss_wlan_resume(struct device *dev)
 {
@@ -1844,7 +1842,6 @@ static int wcnss_wlan_resume(struct device *dev)
 	return 0;
 }
 
-#ifdef CONFIG_DEBUG_FS
 static int wcnss_wlan_resume_noirq(struct device *dev)
 {
 	if (penv && dev && (dev == &penv->pdev->dev) &&
@@ -1853,7 +1850,6 @@ static int wcnss_wlan_resume_noirq(struct device *dev)
 		return penv->pm_ops->resume_noirq(dev);
 	return 0;
 }
-#endif
 
 void wcnss_prevent_suspend(void)
 {
