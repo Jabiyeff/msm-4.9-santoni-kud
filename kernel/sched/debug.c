@@ -705,7 +705,7 @@ do {									\
 	P(walt_stats.nr_big_tasks);
 #endif
 	SEQ_printf(m, "  .%-30s: %llu\n", "walt_stats.cumulative_runnable_avg",
-			rq->walt_stats.cumulative_runnable_avg_scaled);
+			rq->walt_stats.cumulative_runnable_avg);
 #endif
 #undef P
 #undef PN
@@ -786,7 +786,6 @@ static void sched_debug_header(struct seq_file *m)
 	P(sysctl_sched_child_runs_first);
 	P(sysctl_sched_features);
 #ifdef CONFIG_SCHED_WALT
-	P(sched_init_task_load_windows);
 	P(min_capacity);
 	P(max_capacity);
 	P(sched_ravg_window);
