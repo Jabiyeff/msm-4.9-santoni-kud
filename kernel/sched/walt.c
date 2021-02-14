@@ -53,21 +53,6 @@ u64 walt_load_reported_window;
 static struct irq_work walt_cpufreq_irq_work;
 static struct irq_work walt_migration_irq_work;
 
-void
-walt_fixup_cumulative_runnable_avg(struct rq *rq,
-				   struct task_struct *p, u64 new_task_load)
-{
-	s64 task_load_delta = (s64)new_task_load - task_load(p);
-	struct walt_sched_stats *stats = &rq->walt_stats;
-
-	stats->cumulative_runnable_avg += task_load_delta;
-	if ((s64)stats->cumulative_runnable_avg < 0)
-		panic("cra less than zero: tld: %lld, task_load(p) = %u\n",
-			task_load_delta, task_load(p));
-
-	walt_fixup_cum_window_demand(rq, task_load_delta);
-}
-
 u64 sched_ktime_clock(void)
 {
 	if (unlikely(sched_ktime_suspended))
@@ -171,6 +156,8 @@ __read_mostly unsigned int sched_ravg_window =
 __read_mostly unsigned int walt_cpu_util_freq_divisor;
 
 /* Initial task load. Newly created tasks are assigned this load. */
+unsigned int __read_mostly sched_init_task_load_windows;
+unsigned int __read_mostly sched_init_task_load_windows_scaled;
 unsigned int __read_mostly sysctl_sched_init_task_load_pct = 15;
 
 /*
@@ -253,6 +240,9 @@ static int __init set_sched_predl(char *str)
 }
 early_param("sched_predl", set_sched_predl);
 
+__read_mostly unsigned int walt_scale_demand_divisor;
+#define scale_demand(d) ((d)/walt_scale_demand_divisor)
+
 void inc_rq_walt_stats(struct rq *rq, struct task_struct *p)
 {
 	inc_nr_big_task(&rq->walt_stats, p);
@@ -266,10 +256,13 @@ void dec_rq_walt_stats(struct rq *rq, struct task_struct *p)
 }
 
 void fixup_walt_sched_stats_common(struct rq *rq, struct task_struct *p,
-				   u32 new_task_load, u32 new_pred_demand)
+				   u16 updated_demand_scaled,
+				   u16 updated_pred_demand_scaled)
 {
-	s64 task_load_delta = (s64)new_task_load - task_load(p);
-	s64 pred_demand_delta = PRED_DEMAND_DELTA;
+	s64 task_load_delta = (s64)updated_demand_scaled -
+			      p->ravg.demand_scaled;
+	s64 pred_demand_delta = (s64)updated_pred_demand_scaled -
+				p->ravg.pred_demand_scaled;
 
 	fixup_cumulative_runnable_avg(&rq->walt_stats, task_load_delta,
 				      pred_demand_delta);
@@ -337,7 +330,8 @@ update_window_start(struct rq *rq, u64 wallclock, int event)
 	nr_windows = div64_u64(delta, sched_ravg_window);
 	rq->window_start += (u64)nr_windows * (u64)sched_ravg_window;
 
-	rq->cum_window_demand = rq->walt_stats.cumulative_runnable_avg;
+	rq->cum_window_demand_scaled =
+			rq->walt_stats.cumulative_runnable_avg_scaled;
 
 	return old_window_start;
 }
@@ -855,8 +849,9 @@ void fixup_busy_time(struct task_struct *p, int new_cpu)
 	 */
 	if (p->state == TASK_WAKING && p->last_sleep_ts >=
 				       src_rq->window_start) {
-		walt_fixup_cum_window_demand(src_rq, -(s64)p->ravg.demand);
-		walt_fixup_cum_window_demand(dest_rq, p->ravg.demand);
+		walt_fixup_cum_window_demand(src_rq,
+					     -(s64)p->ravg.demand_scaled);
+		walt_fixup_cum_window_demand(dest_rq, p->ravg.demand_scaled);
 	}
 
 	new_task = is_new_task(p);
@@ -1112,6 +1107,7 @@ static inline u32 calc_pred_demand(struct rq *rq, struct task_struct *p)
 void update_task_pred_demand(struct rq *rq, struct task_struct *p, int event)
 {
 	u32 new, old;
+	u16 new_scaled;
 
 	if (!sched_predl)
 		return;
@@ -1140,13 +1136,15 @@ void update_task_pred_demand(struct rq *rq, struct task_struct *p, int event)
 	if (old >= new)
 		return;
 
+	new_scaled = scale_demand(new);
 	if (task_on_rq_queued(p) && (!task_has_dl_policy(p) ||
 				!p->dl.dl_throttled))
 		p->sched_class->fixup_walt_sched_stats(rq, p,
-				p->ravg.demand,
-				new);
+				p->ravg.demand_scaled,
+				new_scaled);
 
 	p->ravg.pred_demand = new;
+	p->ravg.pred_demand_scaled = new_scaled;
 }
 
 void clear_top_tasks_bitmap(unsigned long *bitmap)
@@ -1371,7 +1369,7 @@ static inline unsigned int load_to_freq(struct rq *rq, unsigned int load)
 bool do_pl_notif(struct rq *rq)
 {
 	u64 prev = rq->old_busy_time;
-	u64 pl = rq->walt_stats.pred_demands_sum;
+	u64 pl = rq->walt_stats.pred_demands_sum_scaled;
 	int cpu = cpu_of(rq);
 
 	/* If already at max freq, bail out */
@@ -1379,8 +1377,6 @@ bool do_pl_notif(struct rq *rq)
 		return false;
 
 	prev = max(prev, rq->old_estimated_time);
-
-	pl = div64_u64(pl, sched_ravg_window >> SCHED_CAPACITY_SHIFT);
 
 	/* 400 MHz filter. */
 	return (pl > prev) && (load_to_freq(rq, pl - prev) > 400000);
@@ -1696,6 +1692,13 @@ account_busy_for_task_demand(struct rq *rq, struct task_struct *p, int event)
 		return 0;
 
 	/*
+	 * The idle exit time is not accounted for the first task _picked_ up to
+	 * run on the idle CPU.
+	 */
+	if (event == PICK_NEXT_TASK && rq->curr == rq->idle)
+		return 0;
+
+	/*
 	 * TASK_UPDATE can be called on sleeping task, when its moved between
 	 * related groups
 	 */
@@ -1722,13 +1725,11 @@ static void update_history(struct rq *rq, struct task_struct *p,
 	int ridx, widx;
 	u32 max = 0, avg, demand, pred_demand;
 	u64 sum = 0;
-	u64 prev_demand;
+	u16 demand_scaled, pred_demand_scaled;
 
 	/* Ignore windows where task had no activity */
 	if (!runtime || is_idle_task(p) || exiting_task(p) || !samples)
 		goto done;
-
-	prev_demand = p->ravg.demand;
 
 	/* Push new 'runtime' value onto stack */
 	widx = sched_ravg_hist_size - 1;
@@ -1761,6 +1762,8 @@ static void update_history(struct rq *rq, struct task_struct *p,
 			demand = max(avg, runtime);
 	}
 	pred_demand = predict_and_update_buckets(rq, p, runtime);
+	demand_scaled = scale_demand(demand);
+	pred_demand_scaled = scale_demand(pred_demand);
 
 	/*
 	 * A throttled deadline sched class task gets dequeued without
@@ -1776,15 +1779,17 @@ static void update_history(struct rq *rq, struct task_struct *p,
 	 */
 	if (!task_has_dl_policy(p) || !p->dl.dl_throttled) {
 		if (task_on_rq_queued(p))
-			p->sched_class->fixup_walt_sched_stats(rq, p, demand,
-							       pred_demand);
+			p->sched_class->fixup_walt_sched_stats(rq, p,
+					demand_scaled, pred_demand_scaled);
 		else if (rq->curr == p)
-			walt_fixup_cum_window_demand(rq, demand);
+			walt_fixup_cum_window_demand(rq, demand_scaled);
 	}
 
 	p->ravg.demand = demand;
+	p->ravg.demand_scaled = demand_scaled;
 	p->ravg.coloc_demand = div64_u64(sum, sched_ravg_hist_size);
 	p->ravg.pred_demand = pred_demand;
+	p->ravg.pred_demand_scaled = pred_demand_scaled;
 
 done:
 	trace_sched_update_history(rq, p, runtime, samples, event);
@@ -2036,8 +2041,9 @@ int sched_set_init_task_load(struct task_struct *p, int init_load_pct)
 void init_new_task_load(struct task_struct *p)
 {
 	int i;
-	u32 init_load_windows;
-	u32 init_load_pct;
+	u32 init_load_windows = sched_init_task_load_windows;
+	u32 init_load_windows_scaled = sched_init_task_load_windows_scaled;
+	u32 init_load_pct = current->init_load_pct;
 
 	p->init_load_pct = 0;
 	rcu_assign_pointer(p->grp, NULL);
@@ -2045,68 +2051,44 @@ void init_new_task_load(struct task_struct *p)
 	memset(&p->ravg, 0, sizeof(struct ravg));
 	p->cpu_cycles = 0;
 
-	p->ravg.curr_window_cpu = kcalloc(nr_cpu_ids, sizeof(u32), GFP_KERNEL);
-	p->ravg.prev_window_cpu = kcalloc(nr_cpu_ids, sizeof(u32), GFP_KERNEL);
-
-	/* Don't have much choice. CPU frequency would be bogus */
-	BUG_ON(!p->ravg.curr_window_cpu || !p->ravg.prev_window_cpu);
-
-	if (current->init_load_pct)
-		init_load_pct = current->init_load_pct;
-	else
-		init_load_pct = sysctl_sched_init_task_load_pct;
-
-	init_load_windows = div64_u64((u64)init_load_pct *
-				(u64)sched_ravg_window, 100);
+	if (init_load_pct) {
+		init_load_windows = div64_u64((u64)init_load_pct *
+			  (u64)sched_ravg_window, 100);
+		init_load_windows_scaled = scale_demand(init_load_windows);
+	}
 
 	p->ravg.demand = init_load_windows;
+	p->ravg.demand_scaled = init_load_windows_scaled;
 	p->ravg.coloc_demand = init_load_windows;
 	p->ravg.pred_demand = 0;
+	p->ravg.pred_demand_scaled = 0;
 	for (i = 0; i < RAVG_HIST_SIZE_MAX; ++i)
 		p->ravg.sum_history[i] = init_load_windows;
 	p->misfit = false;
 }
 
-/*
- * kfree() may wakeup kswapd. So this function should NOT be called
- * with any CPU's rq->lock acquired.
- */
-void free_task_load_ptrs(struct task_struct *p)
-{
-	kfree(p->ravg.curr_window_cpu);
-	kfree(p->ravg.prev_window_cpu);
-
-	/*
-	 * update_task_ravg() can be called for exiting tasks. While the
-	 * function itself ensures correct behavior, the corresponding
-	 * trace event requires that these pointers be NULL.
-	 */
-	p->ravg.curr_window_cpu = NULL;
-	p->ravg.prev_window_cpu = NULL;
-}
-
 void reset_task_stats(struct task_struct *p)
 {
-	u32 sum = 0;
-	u32 *curr_window_ptr = NULL;
-	u32 *prev_window_ptr = NULL;
+	u32 sum;
+	u32 curr_window_saved[CONFIG_NR_CPUS];
+	u32 prev_window_saved[CONFIG_NR_CPUS];
 
 	if (exiting_task(p)) {
 		sum = EXITING_TASK_MARKER;
+
+		memset(&p->ravg, 0, sizeof(struct ravg));
+
+		/* Retain EXITING_TASK marker */
+		p->ravg.sum_history[0] = sum;
 	} else {
-		curr_window_ptr =  p->ravg.curr_window_cpu;
-		prev_window_ptr = p->ravg.prev_window_cpu;
-		memset(curr_window_ptr, 0, sizeof(u32) * nr_cpu_ids);
-		memset(prev_window_ptr, 0, sizeof(u32) * nr_cpu_ids);
+		memcpy(curr_window_saved, p->ravg.curr_window_cpu, sizeof(curr_window_saved));
+		memcpy(prev_window_saved, p->ravg.prev_window_cpu, sizeof(prev_window_saved));
+
+		memset(&p->ravg, 0, sizeof(struct ravg));
+
+		memcpy(p->ravg.curr_window_cpu, curr_window_saved, sizeof(curr_window_saved));
+		memcpy(p->ravg.prev_window_cpu, prev_window_saved, sizeof(prev_window_saved));
 	}
-
-	memset(&p->ravg, 0, sizeof(struct ravg));
-
-	p->ravg.curr_window_cpu = curr_window_ptr;
-	p->ravg.prev_window_cpu = prev_window_ptr;
-
-	/* Retain EXITING_TASK marker */
-	p->ravg.sum_history[0] = sum;
 }
 
 void mark_task_starting(struct task_struct *p)
@@ -2122,7 +2104,6 @@ void mark_task_starting(struct task_struct *p)
 	wallclock = sched_ktime_clock();
 	p->ravg.mark_start = p->last_wake_ts = wallclock;
 	p->last_enqueued_ts = wallclock;
-	p->last_switch_out_ts = 0;
 	update_task_cpu_cycles(p, cpu_of(rq), wallclock);
 }
 
@@ -3367,16 +3348,33 @@ int walt_proc_update_handler(struct ctl_table *table, int write,
 	return ret;
 }
 
-void walt_sched_init(struct rq *rq)
+static void walt_init_once(void)
 {
-	int j;
-
-	cpumask_set_cpu(cpu_of(rq), &rq->freq_domain_cpumask);
 	init_irq_work(&walt_migration_irq_work, walt_irq_work);
 	init_irq_work(&walt_cpufreq_irq_work, walt_irq_work);
 	walt_rotate_work_init();
 
-	rq->walt_stats.cumulative_runnable_avg = 0;
+	walt_cpu_util_freq_divisor =
+	    (sched_ravg_window >> SCHED_CAPACITY_SHIFT) * 100;
+	walt_scale_demand_divisor = sched_ravg_window >> SCHED_CAPACITY_SHIFT;
+
+	sched_init_task_load_windows =
+		div64_u64((u64)sysctl_sched_init_task_load_pct *
+			  (u64)sched_ravg_window, 100);
+	sched_init_task_load_windows_scaled =
+		scale_demand(sched_init_task_load_windows);
+}
+
+void walt_sched_init_rq(struct rq *rq)
+{
+	int j;
+
+	if (cpu_of(rq) == 0)
+		walt_init_once();
+
+	cpumask_set_cpu(cpu_of(rq), &rq->freq_domain_cpumask);
+
+	rq->walt_stats.cumulative_runnable_avg_scaled = 0;
 	rq->window_start = 0;
 	rq->cum_window_start = 0;
 	rq->walt_stats.nr_big_tasks = 0;
@@ -3403,7 +3401,7 @@ void walt_sched_init(struct rq *rq)
 	rq->old_busy_time = 0;
 	rq->old_estimated_time = 0;
 	rq->old_busy_time_group = 0;
-	rq->walt_stats.pred_demands_sum = 0;
+	rq->walt_stats.pred_demands_sum_scaled = 0;
 	rq->ed_task = NULL;
 	rq->curr_table = 0;
 	rq->prev_top = 0;
@@ -3419,9 +3417,6 @@ void walt_sched_init(struct rq *rq)
 		BUG_ON(!rq->top_tasks[j]);
 		clear_top_tasks_bitmap(rq->top_tasks_bitmap[j]);
 	}
-	rq->cum_window_demand = 0;
+	rq->cum_window_demand_scaled = 0;
 	rq->notif_pending = false;
-
-	walt_cpu_util_freq_divisor =
-	    (sched_ravg_window >> SCHED_CAPACITY_SHIFT) * 100;
 }
