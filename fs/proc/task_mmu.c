@@ -1658,10 +1658,7 @@ cont:
 		if (!page)
 			continue;
 
-		if (page_mapcount(page) != 1)
-			continue;
-
-                if (isolate_lru_page(compound_head(page)))
+		if (isolate_lru_page(compound_head(page)))
 			continue;
 
 		list_add(&page->lru, &page_list);
@@ -1754,7 +1751,6 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 	unsigned long start = 0;
 	unsigned long end = 0;
 	struct reclaim_param rp;
-	int ret;
 
 	memset(buffer, 0, sizeof(buffer));
 	if (count > sizeof(buffer) - 1)
@@ -1830,11 +1826,9 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 				continue;
 
 			rp.vma = vma;
-			ret = walk_page_range(max(vma->vm_start, start),
+			walk_page_range(max(vma->vm_start, start),
 					min(vma->vm_end, end),
 					&reclaim_walk);
-			if (ret)
-				break;
 			vma = vma->vm_next;
 		}
 	} else {
@@ -1849,10 +1843,8 @@ static ssize_t reclaim_write(struct file *file, const char __user *buf,
 				continue;
 
 			rp.vma = vma;
-			ret = walk_page_range(vma->vm_start, vma->vm_end,
+			walk_page_range(vma->vm_start, vma->vm_end,
 				&reclaim_walk);
-			if (ret)
-				break;
 		}
 	}
 
