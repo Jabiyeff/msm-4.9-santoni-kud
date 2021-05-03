@@ -3,6 +3,7 @@
 
 /*
  * Copyright (C) 1993 Linus Torvalds
+ * Copyright (C) 2016 XiaoMi, Inc.
  *
  * Delay routines, using a pre-computed "loops_per_jiffy" value.
  */
