@@ -52,6 +52,7 @@
 		/delete-property/ msm-vdd-wsa-switch-supply;
 		/delete-property/ qcom,msm-vdd-wsa-switch-voltage;
 		/delete-property/ qcom,msm-vdd-wsa-switch-current;
+		/delete-property/ qcom,cdc-us-euro-gpios;
 		/delete-property/ qcom,msm-gpios;
 		/delete-property/ qcom,pinctrl-names;
 		/delete-property/ pinctrl-names;
