@@ -1052,7 +1052,7 @@ static int get_prop_batt_capacity(struct smbchg_chip *chip)
 		pr_smb(PR_STATUS, "Couldn't get capacity rc = %d\n", rc);
 		capacity = DEFAULT_BATT_CAPACITY;
 	}
-	pr_err("batt_capacity= %d\n", capacity);
+//	pr_err("batt_capacity= %d\n", capacity);
 	return capacity;
 }
 
@@ -1068,10 +1068,10 @@ static int get_prop_batt_temp(struct smbchg_chip *chip)
 	}
 	if (temp < -50) {
 		temp = temp - 55;
-		pr_err("batt_temperature =%d\n", temp);
+//		pr_err("batt_temperature =%d\n", temp);
 		return temp;
 	} else {
-		pr_err("batt_temperature =%d\n", temp);
+//		pr_err("batt_temperature =%d\n", temp);
 		return temp;
 	}
 }
@@ -1086,7 +1086,7 @@ static int get_prop_batt_current_now(struct smbchg_chip *chip)
 		pr_smb(PR_STATUS, "Couldn't get current rc = %d\n", rc);
 		ua = DEFAULT_BATT_CURRENT_NOW;
 	}
-	pr_err("batt_currnt_now = %d\n", ua);
+//	pr_err("batt_currnt_now = %d\n", ua);
 	return ua;
 }
 
@@ -1127,7 +1127,7 @@ static int get_prop_batt_voltage_now(struct smbchg_chip *chip)
 		pr_smb(PR_STATUS, "Couldn't get voltage rc = %d\n", rc);
 		uv = DEFAULT_BATT_VOLTAGE_NOW;
 	}
-	pr_err("batt_voltage_now = %d\n", uv);
+//	pr_err("batt_voltage_now = %d\n", uv);
 	return uv;
 }
 
