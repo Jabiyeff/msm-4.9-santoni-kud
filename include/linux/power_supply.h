@@ -297,6 +297,7 @@ enum power_supply_property {
 	POWER_SUPPLY_PROP_IGNORE_FALSE_NEGATIVE_ISENSE,
 	POWER_SUPPLY_PROP_BATTERY_INFO,
 	POWER_SUPPLY_PROP_BATTERY_INFO_ID,
+	POWER_SUPPLY_PROP_CHARGING_CALL_STATE,
 	POWER_SUPPLY_PROP_ENABLE_JEITA_DETECTION,
 	POWER_SUPPLY_PROP_ESR_ACTUAL,
 	POWER_SUPPLY_PROP_ESR_NOMINAL,
@@ -425,6 +426,7 @@ struct power_supply_desc {
 	bool no_thermal;
 	/* For APM emulation, think legacy userspace. */
 	int use_for_apm;
+	u8 bms_psy_ok;
 };
 
 struct power_supply {
