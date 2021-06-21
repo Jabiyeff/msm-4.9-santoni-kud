@@ -25,6 +25,7 @@
 	vdd-supply = <&pm8937_l8>;
 	qcom,vdd-voltage-level = <2900000 2900000>;
 	qcom,vdd-current-level = <200 570000>;
+	qcom,vdd-always-on;
 
 	/* device communication power supply */
 	vdd-io-supply = <&pm8937_l5>;
@@ -58,7 +59,7 @@
 
 	pinctrl-names = "active", "sleep";
 	pinctrl-0 = <&sdc2_clk_on &sdc2_cmd_on &sdc2_data_on &sdc2_cd_on>;
-	pinctrl-1 = <&sdc2_clk_off &sdc2_cmd_off &sdc2_data_off>;
+	pinctrl-1 = <&sdc2_clk_off &sdc2_cmd_off &sdc2_data_off &sdc2_cd_off>;
 
 	cd-gpios = <&tlmm 67 0x1>;
 
