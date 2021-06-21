@@ -1,4 +1,5 @@
 /* Copyright (c) 2014-2019, The Linux Foundation. All rights reserved.
+ * Copyright (C) 2018 XiaoMi, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -2253,10 +2254,6 @@ static int get_prop_capacity(struct fg_chip *chip)
 
 	if (chip->battery_missing)
 		return MISSING_CAPACITY;
-	if (!chip->profile_loaded && !chip->use_otp_profile) {
-		pr_info("loading batt profile, return last soc %d\n", chip->mi_last_soc);
-		return chip->mi_last_soc;
-	}
 	if (chip->charge_full)
 		return FULL_CAPACITY;
 	if (chip->soc_empty) {
@@ -3382,10 +3379,48 @@ done:
 static void battery_age_work(struct work_struct *work)
 {
 	struct fg_chip *chip = container_of(work,
-				struct fg_chip,
-				battery_age_work);
+			struct fg_chip,
+			battery_age_work);
+	int rc = 0;
+	u8 reg[4], reg1[4];
+	u32 vin_error = 0, vin_error2 = 0;
+	int capacity = 0;
+	static int count_error = 0;
 
 	estimate_battery_age(chip, &chip->actual_cap_uah);
+
+	pr_info("wingtech battery_age_work count_error=%d\n", count_error);
+
+	rc = fg_mem_read(chip, reg, fg_data[8].address,
+			fg_data[8].len, fg_data[8].offset, 0);
+	if (rc) {
+		pr_err("Tmie 1 Failed to update temp data\n");
+	} else{
+		vin_error = reg[0] | (reg[1] << 8)|(reg[2] << 16) | (reg[3] << 24);
+		pr_info("REG[560]=%x %x %x %x,vin_error=%x\n",
+				reg[0], reg[1], reg[2], reg[3], vin_error);
+
+		capacity = get_prop_capacity(chip);
+		if ((chip->status == POWER_SUPPLY_STATUS_CHARGING) && ((capacity < 100) && capacity >= 85) && (vin_error == 0)) {
+			msleep(2000);
+			rc = fg_mem_read(chip, reg1, fg_data[8].address,
+					fg_data[8].len, fg_data[8].offset, 0);
+
+			if (rc) {
+				pr_err("Time 2 Failed to update temp data\n");
+				vin_error2 = 0xFF;
+			} else {
+				vin_error2 = reg1[0] | (reg1[1] << 8)|(reg1[2] << 16) | (reg1[3] << 24);
+				pr_info("REG2[560]=%x %x %x %x, vin_error=%x\n", reg1[0], reg1[1], reg1[2], reg1[3], vin_error2);
+			}
+			if (vin_error == 0 && vin_error2 == 0) {
+				pr_info("wingtech try to reset FG for error at capcity=%d\n", capacity);
+				count_error++;
+				fg_check_ima_error_handling(chip);
+				pr_info("End! wingtech try to reset FG for error\n");
+			}
+		}
+	}
 }
 
 static int correction_times[] = {
@@ -4278,7 +4313,7 @@ static void check_gain_compensation(struct fg_chip *chip)
 }
 
 #define WARNTEMP 30
-#define COOLTEMP 30
+#define COOLTEMP 10
 
 static void fg_hysteresis_config(struct fg_chip *chip)
 {
@@ -6380,6 +6415,45 @@ fail:
 	return -EINVAL;
 }
 
+#define REDO_BATID_DURING_FIRST_EST	BIT(4)
+static void fg_hw_restart(struct fg_chip *chip)
+{
+	u8 reg, rc;
+	int batt_id;
+	u8 data[4];
+
+
+
+
+	reg = 0x80;
+	fg_masked_write(chip, 0x4150, reg, reg, 1);
+	fg_masked_write(chip, chip->soc_base + SOC_RESTART, 0xFF, 0, 1);
+	mdelay(5);
+
+	reg = REDO_BATID_DURING_FIRST_EST|REDO_FIRST_ESTIMATE;
+	fg_masked_write(chip, chip->soc_base + SOC_RESTART, reg, reg, 1);
+	mdelay(5);
+
+	reg = REDO_BATID_DURING_FIRST_EST | REDO_FIRST_ESTIMATE | RESTART_GO;
+	fg_masked_write(chip, chip->soc_base + SOC_RESTART, reg, reg, 1);
+	mdelay(1000);
+
+	fg_masked_write(chip, chip->soc_base + SOC_RESTART, 0xFF, 0, 1);
+	fg_masked_write(chip, 0x4150, 0x80, 0, 1);
+
+	mdelay(2000);
+
+	rc = fg_mem_read(chip, data, fg_data[FG_DATA_BATT_ID].address,
+			fg_data[FG_DATA_BATT_ID].len, fg_data[FG_DATA_BATT_ID].offset, 0);
+	if (rc) {
+		pr_err("XJB Failed to get sram battery id data\n");
+	} else {
+		fg_data[FG_DATA_BATT_ID].value = data[0] * LSB_8B;
+	}
+	batt_id = get_sram_prop_now(chip, FG_DATA_BATT_ID);
+	pr_err("fg_hw_restart. wingtech after restart battery id = %d\n", batt_id);
+}
+
 #define FG_PROFILE_LEN			128
 #define PROFILE_COMPARE_LEN		32
 #define THERMAL_COEFF_ADDR		0x444
@@ -6394,6 +6468,7 @@ static int fg_batt_profile_init(struct fg_chip *chip)
 	const char *data, *batt_type_str;
 	bool tried_again = false, vbat_in_range, profiles_same;
 	u8 reg = 0;
+	int value = 0;
 
 wait:
 	fg_stay_awake(&chip->profile_wakeup_source);
@@ -6413,6 +6488,12 @@ wait:
 	/* Check whether the charger is ready */
 	if (!is_charger_available(chip))
 		goto reschedule;
+
+	value = get_sram_prop_now(chip, FG_DATA_BATT_ID);
+	pr_err("wingtech later init FG_DATA_BATT_ID =%d\n", value);
+	if (!(((value > 85000) && (value < 115000)) || ((value > 57000) && (value < 78000)) || ((value > 24000) && (value < 35000)))) {
+		fg_hw_restart(chip);
+	}
 
 	/* Disable charging for a FG cycle before calculating vbat_in_range */
 	if (!chip->charging_disabled) {
@@ -6695,6 +6776,7 @@ reschedule:
 		&chip->batt_profile_init,
 		msecs_to_jiffies(BATTERY_PSY_WAIT_MS));
 	fg_relax(&chip->profile_wakeup_source);
+	pr_err("wingtech enter reschedule\n");
 	return 0;
 }
 
