@@ -1366,7 +1366,7 @@ unsigned long reclaim_clean_pages_from_list(struct zone *zone,
 	return ret;
 }
 
-#if defined(CONFIG_PROCESS_RECLAIM) || defined(CONFIG_PRLMK)
+#ifdef CONFIG_PROCESS_RECLAIM
 unsigned long reclaim_pages_from_list(struct list_head *page_list,
 					struct vm_area_struct *vma)
 {
@@ -3395,8 +3395,7 @@ static int balance_pgdat(pg_data_t *pgdat, int order, int classzone_idx)
 			wake_up_all(&pgdat->pfmemalloc_wait);
 
 		/* Check if kswapd should be suspending */
-		if (try_to_freeze() || kthread_should_stop() ||
-		    !atomic_long_read(&kswapd_waiters))
+		if (try_to_freeze() || kthread_should_stop())
 			break;
 
 		/*
