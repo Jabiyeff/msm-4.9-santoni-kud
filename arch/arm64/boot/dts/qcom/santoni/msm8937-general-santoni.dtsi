@@ -47,6 +47,10 @@
 	/delete-node/ pa-therm1-adc;
 };
 
+&sdhc_1 {
+	qcom,vdd-always-on;
+};
+
 &qpnp_fg {
 	qcom,battery-data = <&qrd_batterydata>;
 	qcom,cold-bat-decidegc = <(0)>;
