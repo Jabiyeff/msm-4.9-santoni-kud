@@ -5633,7 +5633,8 @@ static int __wlan_hdd_cfg80211_set_spoofed_mac_oui(struct wiphy *wiphy,
             pHddCtx->spoofMacAddr.isEnabled = FALSE;
     }
 
-    schedule_delayed_work(&pHddCtx->spoof_mac_addr_work,
+    queue_delayed_work(system_freezable_power_efficient_wq,
+                          &pHddCtx->spoof_mac_addr_work,
                           msecs_to_jiffies(MAC_ADDR_SPOOFING_DEFER_INTERVAL));
 
     EXIT();
@@ -9507,11 +9508,6 @@ int wlan_hdd_cfg80211_init(struct device *dev,
     {
         wlan_hdd_band_5_GHZ.ht_cap.cap &= ~IEEE80211_HT_CAP_SUP_WIDTH_20_40;
     }
-    if (pCfg->enableTxSTBC)
-    {
-        wlan_hdd_band_2_4_GHZ.vht_cap.cap |= IEEE80211_VHT_CAP_TXSTBC;
-        wlan_hdd_band_5_GHZ.vht_cap.cap |= IEEE80211_VHT_CAP_TXSTBC;
-    }
     /*
      * In case of static linked driver at the time of driver unload,
      * module exit doesn't happens. Module cleanup helps in cleaning
@@ -12070,8 +12066,6 @@ static int __wlan_hdd_cfg80211_stop_ap (struct wiphy *wiphy,
     {
         return status;
     }
-
-    wlan_hdd_cfg80211_deregister_frames(pAdapter);
 
     pScanInfo =  &pHddCtx->scan_info;
 
@@ -15253,7 +15247,8 @@ allow_suspend:
         /* Generate new random mac addr for next scan */
         hddLog(VOS_TRACE_LEVEL_INFO, "scan completed - generate new spoof mac addr");
 
-        schedule_delayed_work(&pHddCtx->spoof_mac_addr_work,
+        queue_delayed_work(system_freezable_power_efficient_wq,
+                           &pHddCtx->spoof_mac_addr_work,
                            msecs_to_jiffies(MAC_ADDR_SPOOFING_DEFER_INTERVAL));
     }
 
