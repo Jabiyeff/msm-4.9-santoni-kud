@@ -622,7 +622,7 @@ Enter_WorkMode:
 	}
 }
 
-void Ft5336_TestRawDataAndDiff()
+void Ft5336_TestRawDataAndDiff(void)
 {
     char m_txoff = 0;
     char m_rxoff = 0;
