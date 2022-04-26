@@ -534,6 +534,7 @@ CLANG_FLAGS	    += -Werror=unknown-warning-option
 CLANG_FLAGS     += -fno-builtin-stpcpy
 KBUILD_CFLAGS	+= $(CLANG_FLAGS)
 KBUILD_AFLAGS	+= $(CLANG_FLAGS)
+KBUILD_CFLAGS   += $(call cc-disable-warning, unused-but-set-variable)
 endif
 
 
