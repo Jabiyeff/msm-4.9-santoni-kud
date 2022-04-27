@@ -59,15 +59,8 @@ MODULE_LICENSE("GPLv2");
 #define DT2W_FEATHER		200
 #define DT2W_TIME		700
 
-/* Half Screen */
-#define HALF_MAX_X		500
-#define HALF_MIN_X		250
-#define HALF_MAX_Y		750
-#define HALF_MIN_Y		500
-
 #define DT2W_OFF 0
 #define DT2W_ON 1
-#define DT2W_FS 2
 
 /* Resources */
 int dt2w_switch = DT2W_DEFAULT;
@@ -85,11 +78,8 @@ static struct work_struct doubletap2wake_presspwr_work;
 static int __init read_dt2w_cmdline(char *dt2w)
 {
 	if (strcmp(dt2w, "1") == 0) {
-		pr_info("[cmdline_dt2w]: DoubleTap2Wake Half enabled. | dt2w='%s'\n", dt2w);
+		pr_info("[cmdline_dt2w]: DoubleTap2Wake enabled. | dt2w='%s'\n", dt2w);
 		dt2w_switch = 1;
-	} else if (strcmp(dt2w, "2") == 0) {
-		pr_info("[cmdline_dt2w]: DoubleTap2Wake Full enabled. | dt2w='%s'\n", dt2w);
-		dt2w_switch = 2;
 	} else if (strcmp(dt2w, "0") == 0) {
 		pr_info("[cmdline_dt2w]: DoubleTap2Wake disabled. | dt2w='%s'\n", dt2w);
 		dt2w_switch = 0;
@@ -163,29 +153,13 @@ static void detect_doubletap2wake(int x, int y, bool st)
 		if (touch_nr == 0) {
 			new_touch(x, y);
 		} else if (touch_nr == 1) {
-			if ((calc_feather(x, x_pre) < DT2W_FEATHER) &&
-			    (calc_feather(y, y_pre) < DT2W_FEATHER)) {
-				if (dt2w_switch == 1) {
-					if ((x_pre >= HALF_MIN_X && x_pre <= HALF_MAX_X) &&
-					   (y_pre >= HALF_MIN_Y && y_pre <= HALF_MAX_Y)) {
-						pr_info(LOGTAG"ON\n");
-						exec_count = false;
-						doubletap2wake_pwrtrigger();
-						doubletap2wake_reset();
-					} else {
-						doubletap2wake_reset();
-						new_touch(x, y);
-					}
-				} else {
-					pr_info(LOGTAG"ON\n");
-					exec_count = false;
-					doubletap2wake_pwrtrigger();
-					doubletap2wake_reset();
-				}
-			} else {
+				pr_info(LOGTAG"ON\n");
+				exec_count = false;
+				doubletap2wake_pwrtrigger();
+				doubletap2wake_reset();
+		} else {
 				doubletap2wake_reset();
 				new_touch(x, y);
-			}
 		}
 	}
 }
@@ -321,7 +295,6 @@ static ssize_t dt2w_doubletap2wake_dump(struct device *dev,
 	switch (new_dt2w_switch) {
 		case DT2W_OFF :
 		case DT2W_ON :
-		case DT2W_FS :
 			if (dt2w_scr_suspended) {
 				pr_info("[cmdline_dt2w]: DoubleTap2Wake isn't changed because the screen is off.'\n");
 				return count;
